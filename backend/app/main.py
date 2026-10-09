@@ -35,7 +35,7 @@ def current_user(request: Request, authorization: str | None = Header(default=No
             and not os.getenv("RENDER")
             and request.url.hostname in {"localhost", "127.0.0.1", "::1"}
             and request.client and request.client.host in {"127.0.0.1", "::1"}):
-        return "projecteval-local-demo"
+        return "projecteval-public"
     url=os.getenv("SUPABASE_URL","").rstrip("/"); anon=os.getenv("SUPABASE_ANON_KEY","")
     if not url or not anon: raise HTTPException(503,"Authentication is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY.")
     if not authorization or not authorization.lower().startswith("bearer "): raise HTTPException(401,"Sign in to continue")
