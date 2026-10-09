@@ -37,7 +37,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO projecteval;
 Tables are automatically created by the API. Inspect data with:
 
 ```sql
-\\dt
+\dt
 SELECT id, name, team, score, status FROM projects ORDER BY id DESC;
 ```
 
@@ -46,7 +46,7 @@ SELECT id, name, team, score, status FROM projects ORDER BY id DESC;
 ```powershell
 cd backend
 py -m venv .venv
-.\\.venv\\Scripts\\Activate.ps1
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 Copy-Item .env.example .env
 # Edit .env and set DATABASE_URL; optionally set OPENAI_API_KEY
@@ -69,14 +69,18 @@ Open http://localhost:3000. API docs: http://localhost:8000/docs. CSV headers: `
 ## Deploy to GitHub, Render, Vercel
 
 ### Push to GitHub
-The GitHub repo for this project is https://github.com/dilliprasadgutha-1677/projecteval. To publish this local checkout:
+Create an empty GitHub repository, then run at the repository root:
 
 ```bash
+git init
+git add .
+git commit -m "Build ProjectEval bulk project evaluator"
+git branch -M main
 git remote add origin https://github.com/dilliprasadgutha-1677/projecteval.git
 git push -u origin main
 ```
 
-Or, after `gh auth login`, run `gh repo create projecteval --source . --private --push` if you have not already created the repository. Keep `.env` and credentials out of Git.
+Or, after `gh auth login`, run `gh repo create projecteval --source . --private --push`. Keep `.env` and credentials out of Git.
 
 ### Supabase
 Create a PostgreSQL project and copy its **Session pooler** connection string from **Connect**. Keep its database password private. The API normalizes `postgresql://` URLs and creates the `projects` table at startup.
