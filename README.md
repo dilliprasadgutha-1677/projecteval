@@ -12,9 +12,9 @@ If any OpenAI request fails during a batch, all partial AI scores are discarded 
 
 Rubric criteria are innovation, feasibility, impact, execution, and scalability. Default weights: 20%, 20%, 25%, 20%, and 15%. The backend creates its table at startup.
 
-The reviewer dashboard opens without login and uses one shared workspace. Anyone who can reach the deployed dashboard or API can view every submission, import projects, change rubric weights, evaluate projects, and export results. Do not use this setup for confidential submissions or private evaluations.
+Sign-in supports verified email or SMS one-time codes through Supabase Auth. The API validates the Supabase access token on every project request and stores each project under its verified user id, so users only see their own workspace.
 
-Organizers can copy a participant submission link from the dashboard. Participants submit project details, a **public GitHub repository URL**, and an optional demo URL without creating an account; their submissions appear in the shared workspace. The GitHub reviewer checks repository metadata, README, languages, file structure, manifests, test paths, and a small sample of source files. It never runs participant code. Review the demo link to see the project running. Private repositories are not accepted by this submission flow.
+Organizers can copy a shareable participant submission link from the dashboard. Participants submit project details, a **public GitHub repository URL**, and an optional demo URL without creating an account; their submissions are stored in the organizer's workspace. The GitHub reviewer checks repository metadata, README, languages, file structure, manifests, test paths, and a small sample of source files. It never runs participant code. Review the demo link to see the project running. Private repositories are not accepted by this submission flow.
 
 When OpenAI scoring is enabled, submitted project details and sampled public repository files are sent to OpenAI for evaluation. Do not submit secrets or private information.
 
@@ -72,7 +72,15 @@ npm run dev
 
 Open http://localhost:3000. API docs: http://localhost:8000/docs. CSV headers: `name` (or `project_name`), `team`, `description`, `problem`, `solution`, `impact`, `tech_stack`. Maximum 500 project rows per upload.
 
-There is no organizer login in this version. Use a managed PostgreSQL database such as Supabase to persist submissions across deployments. Set `PUBLIC_WORKSPACE_ID` to the same value on the API at all times; it defaults to `projecteval-public`.
+## Configure verified email and phone OTP
+
+1. In Supabase **Authentication → Providers**, enable Email and Phone.
+2. In **Authentication → Email Templates**, change the sign-in/magic-link template to include the numeric `{{ .Token }}` code. The sign-in screen verifies this code, not an email link.
+3. Configure an SMS provider under Supabase phone authentication (for example Twilio), with your provider credentials. Phone OTP cannot deliver until an SMS provider is configured; use international format such as `+14155550123`.
+4. Set the Supabase project URL and **publishable/anon key** in both frontend and backend environment variables below. Never put a `service_role` key in the frontend.
+5. Set a GitHub fine-grained token with read-only access to public repository contents as `GITHUB_TOKEN` on Render. This gives room to review large batches without quickly hitting GitHub's unauthenticated API rate limit.
+
+Supabase sends the code and verifies it through Auth. New users can register by entering an email or phone number and verifying their first code. OTP expiry and send limits are controlled by Supabase Auth.
 
 ## Deploy to GitHub, Render, Vercel
 
@@ -99,7 +107,8 @@ Create a **Blueprint** in Render and connect the GitHub repo; choose `backend/re
 - `DATABASE_URL`: Supabase pooler URI.
 - `OPENAI_API_KEY`: optional; omit for fallback scoring.
 - `FRONTEND_ORIGIN`: your Vercel URL, e.g. `https://projecteval.vercel.app`.
-- `PUBLIC_WORKSPACE_ID`: `projecteval-public` (keep this value stable across deploys).
+- `SUPABASE_URL`: your Supabase project URL.
+- `SUPABASE_ANON_KEY`: the Supabase publishable/anon key used to validate logged-in users.
 - `GITHUB_TOKEN`: a server-side GitHub token with read-only access to public repository contents; never expose it in Vercel.
 
 Deploy and confirm `https://YOUR-API.onrender.com/health` returns `{"ok":true}`. Free instances can sleep while idle; for consistently fast batches, use an always-on service.
@@ -108,6 +117,7 @@ Deploy and confirm `https://YOUR-API.onrender.com/health` returns `{"ok":true}`.
 Import the repository in Vercel. Set **Root Directory** to `frontend`, framework to Next.js, and add:
 
 - `NEXT_PUBLIC_API_URL=https://YOUR-API.onrender.com` (no trailing slash)
+- `NEXT_PUBLIC_SUPABASE_URL=https://YOUR-PROJECT.supabase.co`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY=YOUR_SUPABASE_PUBLISHABLE_OR_ANON_KEY`
 
 Deploy. If using a custom frontend domain, update Render's `FRONTEND_ORIGIN` and redeploy. The CSV upload sends the file directly to your API.
-
