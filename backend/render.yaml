@@ -15,3 +15,10 @@ services:
         sync: false
       - key: FRONTEND_ORIGIN
         sync: false
+      - key: ALLOW_LOCAL_DEMO_AUTH
+        value: "false"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+
