@@ -8,6 +8,8 @@ An AI-assisted bulk project evaluator for cohorts, hackathons, and review panels
 - Database recommendation: **Supabase PostgreSQL** for a managed relational database with SQL editor, backups, and connection pooling. It is a strong fit for structured project submissions and can also be used with other PostgreSQL providers.
 - AI: OpenAI `gpt-4o-mini` when `OPENAI_API_KEY` is set. With no key, a rule-based evidence heuristic keeps the app usable. Human reviewers should review scores before consequential decisions.
 
+If any OpenAI request fails during a batch, all partial AI scores are discarded and every project in that batch is rescored using the same deterministic backup rubric. The selected method is shown for each evaluated project and in the batch result, so one batch never mixes scoring engines.
+
 Rubric criteria are innovation, feasibility, impact, execution, and scalability. Default weights: 20%, 20%, 25%, 20%, and 15%. The backend creates its table at startup.
 
 Sign-in supports verified email or SMS one-time codes through Supabase Auth. The API validates the Supabase access token on every project request and stores each project under its verified user id, so users only see their own workspace.

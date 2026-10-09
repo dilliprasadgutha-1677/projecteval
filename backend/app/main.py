@@ -7,20 +7,25 @@ from sqlalchemy.orm import Session
 from .database import Base, engine, get_db
 from .models import Project
 from .schemas import ProjectInput, EvaluateRequest
-from .evaluator import CRITERIA, evaluate
+from .evaluator import CRITERIA, evaluate_openai, evaluate_rules
 import httpx
+import logging
 
 Base.metadata.create_all(bind=engine)
 if "user_id" not in {c["name"] for c in inspect(engine).get_columns("projects")}:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE projects ADD COLUMN user_id VARCHAR(128)"))
+if "evaluation_method" not in {c["name"] for c in inspect(engine).get_columns("projects")}:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE projects ADD COLUMN evaluation_method VARCHAR(32)"))
 with engine.begin() as conn:
     conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_user_id ON projects (user_id)"))
 app = FastAPI(title="ProjectEval API", version="1.0.0", description="Evidence-based bulk project evaluation.")
+logger=logging.getLogger(__name__)
 app.add_middleware(CORSMiddleware, allow_origins=[os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")], allow_origin_regex=r"https://.*\.vercel\.app", allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 def out(p):
-    return {"id":p.id,"name":p.name,"team":p.team,"description":p.description,"problem":p.problem,"solution":p.solution,"impact":p.impact,"tech_stack":p.tech_stack,"score":p.score,"breakdown":p.breakdown or {},"feedback":p.feedback or "","status":p.status,"created_at":p.created_at.isoformat() if p.created_at else None}
+    return {"id":p.id,"name":p.name,"team":p.team,"description":p.description,"problem":p.problem,"solution":p.solution,"impact":p.impact,"tech_stack":p.tech_stack,"score":p.score,"breakdown":p.breakdown or {},"feedback":p.feedback or "","status":p.status,"evaluation_method":p.evaluation_method,"created_at":p.created_at.isoformat() if p.created_at else None}
 
 def current_user(authorization: str | None = Header(default=None)):
     url=os.getenv("SUPABASE_URL","").rstrip("/"); anon=os.getenv("SUPABASE_ANON_KEY","")
@@ -75,12 +80,23 @@ def evaluate_projects(req:EvaluateRequest,db:Session=Depends(get_db),user_id:str
     projects=q.filter(Project.status!="evaluated").all() if req.project_ids is None else q.all()
     for p in projects: p.status="evaluating"
     db.commit()
-    # Parallel scoring keeps a full 500-project batch practical while bounding API pressure.
-    with ThreadPoolExecutor(max_workers=10) as pool:
-        results=list(pool.map(lambda p: evaluate(p,weights), projects))
+    # Pick one evaluator for the entire batch. Discard partial AI results on any failure.
+    method="openai" if os.getenv("OPENAI_API_KEY") else "backup_rubric"
+    if method=="openai":
+        try:
+            with ThreadPoolExecutor(max_workers=10) as pool:
+                results=list(pool.map(lambda p:evaluate_openai(p,weights),projects))
+        except Exception as exc:
+            logger.warning("OpenAI batch evaluation failed; using backup rubric for all %d projects: %s",len(projects),exc)
+            method="backup_rubric"
+            with ThreadPoolExecutor(max_workers=10) as pool:
+                results=list(pool.map(lambda p:evaluate_rules(p,weights),projects))
+    else:
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            results=list(pool.map(lambda p:evaluate_rules(p,weights),projects))
     for p,result in zip(projects,results):
-        p.score,p.breakdown,p.feedback=result; p.status="evaluated"
-    db.commit(); return {"evaluated":sum(p.status=="evaluated" for p in projects),"failed":sum(p.status=="failed" for p in projects)}
+        p.score,p.breakdown,p.feedback=result; p.evaluation_method=method; p.status="evaluated"
+    db.commit(); return {"evaluated":sum(p.status=="evaluated" for p in projects),"failed":sum(p.status=="failed" for p in projects),"evaluation_method":method}
 
 @app.get("/api/stats")
 def stats(db:Session=Depends(get_db),user_id:str=Depends(current_user)):
