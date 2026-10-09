@@ -14,6 +14,8 @@ Rubric criteria are innovation, feasibility, impact, execution, and scalability.
 
 Sign-in supports verified email or SMS one-time codes through Supabase Auth. The API validates the Supabase access token on every project request and stores each project under its verified user id, so users only see their own workspace.
 
+Organizers can copy a shareable participant submission link from the dashboard. Participants submit project details, a **public GitHub repository URL**, and an optional demo URL without creating an account; their submissions are stored in the organizer's workspace. The GitHub reviewer checks repository metadata, README, languages, file structure, manifests, test paths, and a small sample of source files. It never runs participant code. Review the demo link to see the project running. Private repositories are not accepted by this submission flow.
+
 ## Local setup
 Requirements: Node.js 20+, Python 3.11+, PostgreSQL 15+ (or a Supabase project).
 
@@ -74,6 +76,7 @@ Open http://localhost:3000. API docs: http://localhost:8000/docs. CSV headers: `
 2. In **Authentication → Email Templates**, change the sign-in/magic-link template to include the numeric `{{ .Token }}` code. The sign-in screen verifies this code, not an email link.
 3. Configure an SMS provider under Supabase phone authentication (for example Twilio), with your provider credentials. Phone OTP cannot deliver until an SMS provider is configured; use international format such as `+14155550123`.
 4. Set the Supabase project URL and **publishable/anon key** in both frontend and backend environment variables below. Never put a `service_role` key in the frontend.
+5. Set a GitHub fine-grained token with read-only access to public repository contents as `GITHUB_TOKEN` on Render. This gives room to review large batches without quickly hitting GitHub's unauthenticated API rate limit.
 
 Supabase sends the code and verifies it through Auth. New users can register by entering an email or phone number and verifying their first code. OTP expiry and send limits are controlled by Supabase Auth.
 
@@ -104,6 +107,7 @@ Create a **Blueprint** in Render and connect the GitHub repo; choose `backend/re
 - `FRONTEND_ORIGIN`: your Vercel URL, e.g. `https://projecteval.vercel.app`.
 - `SUPABASE_URL`: your Supabase project URL.
 - `SUPABASE_ANON_KEY`: the Supabase publishable/anon key used to validate logged-in users.
+- `GITHUB_TOKEN`: a server-side GitHub token with read-only access to public repository contents; never expose it in Vercel.
 
 Deploy and confirm `https://YOUR-API.onrender.com/health` returns `{"ok":true}`. Free instances can sleep while idle; for consistently fast batches, use an always-on service.
 

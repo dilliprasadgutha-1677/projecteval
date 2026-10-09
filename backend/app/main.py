@@ -1,12 +1,13 @@
-import csv, io, os
+import csv, io, os, secrets
 from fastapi import FastAPI, Depends, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 from .database import Base, engine, get_db
-from .models import Project
-from .schemas import ProjectInput, EvaluateRequest
+from .models import Project, Workspace
+from .schemas import ProjectInput, EvaluateRequest, PublicSubmission
 from .evaluator import CRITERIA, evaluate_batch
+from .github_review import review_repository
 import httpx
 import logging
 
@@ -17,6 +18,9 @@ if "user_id" not in {c["name"] for c in inspect(engine).get_columns("projects")}
 if "evaluation_method" not in {c["name"] for c in inspect(engine).get_columns("projects")}:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE projects ADD COLUMN evaluation_method VARCHAR(32)"))
+for column,sql_type in (("submitted_by","VARCHAR(240)"),("github_url","VARCHAR(500)"),("demo_url","VARCHAR(1000)"),("repository_review","TEXT")):
+    if column not in {c["name"] for c in inspect(engine).get_columns("projects")}:
+        with engine.begin() as conn: conn.execute(text(f"ALTER TABLE projects ADD COLUMN {column} {sql_type}"))
 with engine.begin() as conn:
     conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_user_id ON projects (user_id)"))
 app = FastAPI(title="ProjectEval API", version="1.0.0", description="Evidence-based bulk project evaluation.")
@@ -24,7 +28,7 @@ logger=logging.getLogger(__name__)
 app.add_middleware(CORSMiddleware, allow_origins=[os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")], allow_origin_regex=r"https://.*\.vercel\.app", allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 def out(p):
-    return {"id":p.id,"name":p.name,"team":p.team,"description":p.description,"problem":p.problem,"solution":p.solution,"impact":p.impact,"tech_stack":p.tech_stack,"score":p.score,"breakdown":p.breakdown or {},"feedback":p.feedback or "","status":p.status,"evaluation_method":p.evaluation_method,"created_at":p.created_at.isoformat() if p.created_at else None}
+    return {"id":p.id,"name":p.name,"team":p.team,"submitted_by":p.submitted_by,"description":p.description,"problem":p.problem,"solution":p.solution,"impact":p.impact,"tech_stack":p.tech_stack,"github_url":p.github_url,"demo_url":p.demo_url,"score":p.score,"breakdown":p.breakdown or {},"feedback":p.feedback or "","status":p.status,"evaluation_method":p.evaluation_method,"created_at":p.created_at.isoformat() if p.created_at else None}
 
 def current_user(authorization: str | None = Header(default=None)):
     url=os.getenv("SUPABASE_URL","").rstrip("/"); anon=os.getenv("SUPABASE_ANON_KEY","")
@@ -43,6 +47,26 @@ def health(): return {"ok":True}
 
 @app.get("/api/rubric")
 def rubric(): return {k:{"label":v[0],"description":v[1]} for k,v in CRITERIA.items()}
+
+@app.post("/api/workspace/share-link")
+def create_share_link(db:Session=Depends(get_db),user_id:str=Depends(current_user)):
+    workspace=db.query(Workspace).filter(Workspace.user_id==user_id).first()
+    if not workspace:
+        workspace=Workspace(user_id=user_id,share_code=secrets.token_urlsafe(32)); db.add(workspace); db.commit(); db.refresh(workspace)
+    return {"share_code":workspace.share_code}
+
+@app.post("/api/public-submissions/{share_code}")
+def public_submission(share_code:str,item:PublicSubmission,db:Session=Depends(get_db)):
+    workspace=db.query(Workspace).filter(Workspace.share_code==share_code).first()
+    if not workspace: raise HTTPException(404,"This submission link is invalid or has been revoked")
+    try: repo_review=review_repository(item.github_url)
+    except ValueError as exc: raise HTTPException(400,str(exc))
+    except Exception as exc:
+        logger.warning("GitHub repository review unavailable for submission: %s",exc)
+        repo_review="GitHub review unavailable. Review this repository manually before scoring."
+    data=item.model_dump(); data["repository_review"]=repo_review
+    project=Project(**data,user_id=workspace.user_id,status="pending"); db.add(project); db.commit(); db.refresh(project)
+    return {"id":project.id,"name":project.name,"message":"Submission received. Your project is now in the evaluator's review queue."}
 
 @app.get("/api/projects")
 def list_projects(db:Session=Depends(get_db),user_id:str=Depends(current_user)): return [out(p) for p in db.query(Project).filter(Project.user_id==user_id).order_by(Project.id.desc()).limit(1000).all()]
