@@ -10,7 +10,7 @@ An AI-assisted bulk project evaluator for cohorts, hackathons, and review panels
 
 Rubric criteria are innovation, feasibility, impact, execution, and scalability. Default weights: 20%, 20%, 25%, 20%, and 15%. The backend creates its table at startup.
 
-**Before using with private submissions:** this starter app does not include user authentication or workspace isolation. Treat deployed data as public to anyone who discovers the API URL. Add authentication and authorization before storing sensitive or personal project data.
+Sign-in supports verified email or SMS one-time codes through Supabase Auth. The API validates the Supabase access token on every project request and stores each project under its verified user id, so users only see their own workspace.
 
 ## Local setup
 Requirements: Node.js 20+, Python 3.11+, PostgreSQL 15+ (or a Supabase project).
@@ -66,6 +66,15 @@ npm run dev
 
 Open http://localhost:3000. API docs: http://localhost:8000/docs. CSV headers: `name` (or `project_name`), `team`, `description`, `problem`, `solution`, `impact`, `tech_stack`. Maximum 500 project rows per upload.
 
+## Configure verified email and phone OTP
+
+1. In Supabase **Authentication → Providers**, enable Email and Phone.
+2. In **Authentication → Email Templates**, change the sign-in/magic-link template to include the numeric `{{ .Token }}` code. The sign-in screen verifies this code, not an email link.
+3. Configure an SMS provider under Supabase phone authentication (for example Twilio), with your provider credentials. Phone OTP cannot deliver until an SMS provider is configured; use international format such as `+14155550123`.
+4. Set the Supabase project URL and **publishable/anon key** in both frontend and backend environment variables below. Never put a `service_role` key in the frontend.
+
+Supabase sends the code and verifies it through Auth. New users can register by entering an email or phone number and verifying their first code. OTP expiry and send limits are controlled by Supabase Auth.
+
 ## Deploy to GitHub, Render, Vercel
 
 ### Push to GitHub
@@ -91,6 +100,8 @@ Create a **Blueprint** in Render and connect the GitHub repo; choose `backend/re
 - `DATABASE_URL`: Supabase pooler URI.
 - `OPENAI_API_KEY`: optional; omit for fallback scoring.
 - `FRONTEND_ORIGIN`: your Vercel URL, e.g. `https://projecteval.vercel.app`.
+- `SUPABASE_URL`: your Supabase project URL.
+- `SUPABASE_ANON_KEY`: the Supabase publishable/anon key used to validate logged-in users.
 
 Deploy and confirm `https://YOUR-API.onrender.com/health` returns `{"ok":true}`. Free instances can sleep while idle; for consistently fast batches, use an always-on service.
 
@@ -98,5 +109,7 @@ Deploy and confirm `https://YOUR-API.onrender.com/health` returns `{"ok":true}`.
 Import the repository in Vercel. Set **Root Directory** to `frontend`, framework to Next.js, and add:
 
 - `NEXT_PUBLIC_API_URL=https://YOUR-API.onrender.com` (no trailing slash)
+- `NEXT_PUBLIC_SUPABASE_URL=https://YOUR-PROJECT.supabase.co`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY=YOUR_SUPABASE_PUBLISHABLE_OR_ANON_KEY`
 
 Deploy. If using a custom frontend domain, update Render's `FRONTEND_ORIGIN` and redeploy. The CSV upload sends the file directly to your API.

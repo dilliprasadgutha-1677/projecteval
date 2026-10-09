@@ -6,6 +6,7 @@ from .database import Base
 class Project(Base):
     __tablename__ = "projects"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(240), index=True)
     team: Mapped[str] = mapped_column(String(240), default="Unassigned")
     description: Mapped[str] = mapped_column(Text, default="")

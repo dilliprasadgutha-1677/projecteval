@@ -1,19 +1,38 @@
 import csv, io, os
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import FastAPI, Depends, File, HTTPException, UploadFile
+from fastapi import FastAPI, Depends, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 from .database import Base, engine, get_db
 from .models import Project
 from .schemas import ProjectInput, EvaluateRequest
 from .evaluator import CRITERIA, evaluate
+import httpx
 
 Base.metadata.create_all(bind=engine)
+if "user_id" not in {c["name"] for c in inspect(engine).get_columns("projects")}:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE projects ADD COLUMN user_id VARCHAR(128)"))
+with engine.begin() as conn:
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_user_id ON projects (user_id)"))
 app = FastAPI(title="ProjectEval API", version="1.0.0", description="Evidence-based bulk project evaluation.")
 app.add_middleware(CORSMiddleware, allow_origins=[os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")], allow_origin_regex=r"https://.*\.vercel\.app", allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 def out(p):
     return {"id":p.id,"name":p.name,"team":p.team,"description":p.description,"problem":p.problem,"solution":p.solution,"impact":p.impact,"tech_stack":p.tech_stack,"score":p.score,"breakdown":p.breakdown or {},"feedback":p.feedback or "","status":p.status,"created_at":p.created_at.isoformat() if p.created_at else None}
+
+def current_user(authorization: str | None = Header(default=None)):
+    url=os.getenv("SUPABASE_URL","").rstrip("/"); anon=os.getenv("SUPABASE_ANON_KEY","")
+    if not url or not anon: raise HTTPException(503,"Authentication is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY.")
+    if not authorization or not authorization.lower().startswith("bearer "): raise HTTPException(401,"Sign in to continue")
+    try:
+        response=httpx.get(f"{url}/auth/v1/user",headers={"apikey":anon,"Authorization":authorization},timeout=8)
+        if response.status_code!=200: raise HTTPException(401,"Session expired. Please sign in again.")
+        user=response.json()
+        if not user.get("id"): raise HTTPException(401,"Invalid user session")
+        return user["id"]
+    except httpx.HTTPError: raise HTTPException(503,"Authentication service is temporarily unavailable")
 
 @app.get("/health")
 def health(): return {"ok":True}
@@ -22,14 +41,14 @@ def health(): return {"ok":True}
 def rubric(): return {k:{"label":v[0],"description":v[1]} for k,v in CRITERIA.items()}
 
 @app.get("/api/projects")
-def list_projects(db:Session=Depends(get_db)): return [out(p) for p in db.query(Project).order_by(Project.id.desc()).limit(1000).all()]
+def list_projects(db:Session=Depends(get_db),user_id:str=Depends(current_user)): return [out(p) for p in db.query(Project).filter(Project.user_id==user_id).order_by(Project.id.desc()).limit(1000).all()]
 
 @app.post("/api/projects")
-def add_project(item:ProjectInput,db:Session=Depends(get_db)):
-    p=Project(**item.model_dump()); db.add(p); db.commit(); db.refresh(p); return out(p)
+def add_project(item:ProjectInput,db:Session=Depends(get_db),user_id:str=Depends(current_user)):
+    p=Project(**item.model_dump(),user_id=user_id); db.add(p); db.commit(); db.refresh(p); return out(p)
 
 @app.post("/api/projects/import")
-async def import_projects(file:UploadFile=File(...),db:Session=Depends(get_db)):
+async def import_projects(file:UploadFile=File(...),db:Session=Depends(get_db),user_id:str=Depends(current_user)):
     if not file.filename.lower().endswith(".csv"): raise HTTPException(400,"Upload a CSV file")
     try:
         content=(await file.read()).decode("utf-8-sig"); reader=csv.DictReader(io.StringIO(content))
@@ -42,16 +61,16 @@ async def import_projects(file:UploadFile=File(...),db:Session=Depends(get_db)):
             row={k.strip().lower().replace(" ","_"):(v or "").strip() for k,v in raw.items() if k}
             name=row.get("name") or row.get("project_name")
             if name:
-                data={k:row.get(k,"") for k in allowed}; data["name"]=name; data["team"]=data["team"] or "Unassigned"; projects.append(Project(**data))
+                data={k:row.get(k,"") for k in allowed}; data["name"]=name; data["team"]=data["team"] or "Unassigned"; projects.append(Project(**data,user_id=user_id))
         if not projects: raise HTTPException(400,"No rows had a project name")
         db.add_all(projects); db.commit(); return {"imported":len(projects),"message":f"Imported {len(projects)} projects"}
     except UnicodeDecodeError: raise HTTPException(400,"CSV must use UTF-8 encoding")
 
 @app.post("/api/evaluate")
-def evaluate_projects(req:EvaluateRequest,db:Session=Depends(get_db)):
+def evaluate_projects(req:EvaluateRequest,db:Session=Depends(get_db),user_id:str=Depends(current_user)):
     weights=req.weights or {"innovation":20,"feasibility":20,"impact":25,"execution":20,"scalability":15}
     if set(weights)!=set(CRITERIA) or any(v<0 for v in weights.values()) or abs(sum(weights.values())-100)>.01: raise HTTPException(400,"Provide all five non-negative rubric weights totaling 100")
-    q=db.query(Project)
+    q=db.query(Project).filter(Project.user_id==user_id)
     if req.project_ids is not None: q=q.filter(Project.id.in_(req.project_ids))
     projects=q.filter(Project.status!="evaluated").all() if req.project_ids is None else q.all()
     for p in projects: p.status="evaluating"
@@ -64,7 +83,7 @@ def evaluate_projects(req:EvaluateRequest,db:Session=Depends(get_db)):
     db.commit(); return {"evaluated":sum(p.status=="evaluated" for p in projects),"failed":sum(p.status=="failed" for p in projects)}
 
 @app.get("/api/stats")
-def stats(db:Session=Depends(get_db)):
-    items=db.query(Project).all(); scored=[p for p in items if p.score is not None]
+def stats(db:Session=Depends(get_db),user_id:str=Depends(current_user)):
+    items=db.query(Project).filter(Project.user_id==user_id).all(); scored=[p for p in items if p.score is not None]
     return {"total":len(items),"evaluated":len(scored),"pending":len(items)-len(scored),"average":round(sum(p.score for p in scored)/len(scored),1) if scored else 0,"top_score":max((p.score for p in scored),default=0)}
 
