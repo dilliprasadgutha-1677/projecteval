@@ -1,5 +1,5 @@
 import csv, io, os, secrets
-from fastapi import FastAPI, Depends, File, Header, HTTPException, UploadFile
+from fastapi import FastAPI, Depends, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
@@ -30,7 +30,12 @@ app.add_middleware(CORSMiddleware, allow_origins=[os.getenv("FRONTEND_ORIGIN", "
 def out(p):
     return {"id":p.id,"name":p.name,"team":p.team,"submitted_by":p.submitted_by,"description":p.description,"problem":p.problem,"solution":p.solution,"impact":p.impact,"tech_stack":p.tech_stack,"github_url":p.github_url,"demo_url":p.demo_url,"score":p.score,"breakdown":p.breakdown or {},"feedback":p.feedback or "","status":p.status,"evaluation_method":p.evaluation_method,"created_at":p.created_at.isoformat() if p.created_at else None}
 
-def current_user(authorization: str | None = Header(default=None)):
+def current_user(request: Request, authorization: str | None = Header(default=None)):
+    if (os.getenv("ALLOW_LOCAL_DEMO_AUTH", "false").lower() == "true"
+            and not os.getenv("RENDER")
+            and request.url.hostname in {"localhost", "127.0.0.1", "::1"}
+            and request.client and request.client.host in {"127.0.0.1", "::1"}):
+        return "projecteval-local-demo"
     url=os.getenv("SUPABASE_URL","").rstrip("/"); anon=os.getenv("SUPABASE_ANON_KEY","")
     if not url or not anon: raise HTTPException(503,"Authentication is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY.")
     if not authorization or not authorization.lower().startswith("bearer "): raise HTTPException(401,"Sign in to continue")
@@ -115,4 +120,5 @@ def evaluate_projects(req:EvaluateRequest,db:Session=Depends(get_db),user_id:str
 def stats(db:Session=Depends(get_db),user_id:str=Depends(current_user)):
     items=db.query(Project).filter(Project.user_id==user_id).all(); scored=[p for p in items if p.score is not None]
     return {"total":len(items),"evaluated":len(scored),"pending":len(items)-len(scored),"average":round(sum(p.score for p in scored)/len(scored),1) if scored else 0,"top_score":max((p.score for p in scored),default=0)}
+
 
