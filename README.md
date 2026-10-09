@@ -16,6 +16,8 @@ Sign-in supports verified email or SMS one-time codes through Supabase Auth. The
 
 Organizers can copy a shareable participant submission link from the dashboard. Participants submit project details, a **public GitHub repository URL**, and an optional demo URL without creating an account; their submissions are stored in the organizer's workspace. The GitHub reviewer checks repository metadata, README, languages, file structure, manifests, test paths, and a small sample of source files. It never runs participant code. Review the demo link to see the project running. Private repositories are not accepted by this submission flow.
 
+When OpenAI scoring is enabled, submitted project details and sampled public repository files are sent to OpenAI for evaluation. Do not submit secrets or private information.
+
 ## Local setup
 Requirements: Node.js 20+, Python 3.11+, PostgreSQL 15+ (or a Supabase project).
 
