@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 load_dotenv()
-DATABASE_URL = os.getenv("DATABASE_URL") or "sqlite:///./projecteval.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./projecteval.db")
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
 elif DATABASE_URL.startswith("postgresql://"):
@@ -21,4 +21,3 @@ def get_db():
         yield db
     finally:
         db.close()
-
