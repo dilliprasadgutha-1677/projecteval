@@ -1,4 +1,5 @@
 import json, os, re
+from concurrent.futures import ThreadPoolExecutor
 
 CRITERIA = {
     "innovation": ("Innovation", "Originality and differentiation"),
@@ -39,3 +40,17 @@ def evaluate_openai(project, weights):
     breakdown={k:max(0,min(100,float(data["breakdown"][k]))) for k in CRITERIA}
     score=round(sum(breakdown[k]*weights[k] for k in CRITERIA)/100,1)
     return score,breakdown,str(data.get("feedback","Evaluation complete."))[:1200]
+
+def evaluate_batch(projects, weights, ai_enabled, ai_scorer=None):
+    """Score a batch consistently; on any AI failure, discard AI results and rescore all."""
+    if not ai_enabled:
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            return list(pool.map(lambda p:evaluate_rules(p,weights),projects)),"backup_rubric",None
+    scorer=ai_scorer or evaluate_openai
+    try:
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            return list(pool.map(lambda p:scorer(p,weights),projects)),"openai",None
+    except Exception as exc:
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            results=list(pool.map(lambda p:evaluate_rules(p,weights),projects))
+        return results,"backup_rubric",str(exc)

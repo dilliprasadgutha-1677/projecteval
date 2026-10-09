@@ -1,5 +1,4 @@
 import csv, io, os
-from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, Depends, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect, text
@@ -7,7 +6,7 @@ from sqlalchemy.orm import Session
 from .database import Base, engine, get_db
 from .models import Project
 from .schemas import ProjectInput, EvaluateRequest
-from .evaluator import CRITERIA, evaluate_openai, evaluate_rules
+from .evaluator import CRITERIA, evaluate_batch
 import httpx
 import logging
 
@@ -81,19 +80,9 @@ def evaluate_projects(req:EvaluateRequest,db:Session=Depends(get_db),user_id:str
     for p in projects: p.status="evaluating"
     db.commit()
     # Pick one evaluator for the entire batch. Discard partial AI results on any failure.
-    method="openai" if os.getenv("OPENAI_API_KEY") else "backup_rubric"
-    if method=="openai":
-        try:
-            with ThreadPoolExecutor(max_workers=10) as pool:
-                results=list(pool.map(lambda p:evaluate_openai(p,weights),projects))
-        except Exception as exc:
-            logger.warning("OpenAI batch evaluation failed; using backup rubric for all %d projects: %s",len(projects),exc)
-            method="backup_rubric"
-            with ThreadPoolExecutor(max_workers=10) as pool:
-                results=list(pool.map(lambda p:evaluate_rules(p,weights),projects))
-    else:
-        with ThreadPoolExecutor(max_workers=10) as pool:
-            results=list(pool.map(lambda p:evaluate_rules(p,weights),projects))
+    results,method,fallback_reason=evaluate_batch(projects,weights,bool(os.getenv("OPENAI_API_KEY")))
+    if fallback_reason:
+        logger.warning("OpenAI batch evaluation failed; using backup rubric for all %d projects: %s",len(projects),fallback_reason)
     for p,result in zip(projects,results):
         p.score,p.breakdown,p.feedback=result; p.evaluation_method=method; p.status="evaluated"
     db.commit(); return {"evaluated":sum(p.status=="evaluated" for p in projects),"failed":sum(p.status=="failed" for p in projects),"evaluation_method":method}
